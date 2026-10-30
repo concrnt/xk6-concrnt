@@ -1,15 +1,21 @@
 import http from "k6/http";
-import { sleep, check } from "k6";
+import { check } from "k6";
+import { Counter } from "k6/metrics";
 import concrnt from 'k6/x/concrnt';
-import { WebSocket } from "k6/experimental/websockets";
+import { WebSocket } from "k6/websockets";
 
 const maxVU = 100;
 const isSecure = false;
 const target = 'localhost:8080';
-const targetFQDN = 'example.com'; // TODO: REPLACE WITH YOUR DOMAIN
-const timelineID = 'SET_YOUR_TIMELINE_ID_HERE'; // TODO: REPLACE WITH YOUR TIMELINE ID
+const targetFQDN = 'example.com'; // TODO: REPLACE WITH YOUR DOMAIN (must match the server's fqdn)
+const captchaToken = ''; // TODO: set when the server enforces captcha on /register
+const targetTimelines = [
+    // TODO: REPLACE WITH TIMELINE URIs TO READ/POST. Posts only land on timelines whose policy lets the VUs write.
+    'cckv://SET_YOUR_CCID_HERE/concrnt.world/profiles/main/home-timeline',
+];
 
-const apiBase = `${isSecure ? 'https' : 'http'}://${target}/api/v1`;
+const apiBase = `${isSecure ? 'https' : 'http'}://${target}/api/v2`;
+const wsURL = `${isSecure ? 'wss' : 'ws'}://${target}/api/v2/realtime`;
 
 const postSamples = [
     "今日はいい天気ですね！🌞",
@@ -59,181 +65,170 @@ export const options = {
     ],
 };
 
-const postDocument = (identity, document, option) => {
-    const signedDoc = JSON.stringify(document);
-    const signature = concrnt.sign(identity.privkey, signedDoc);
+const realtimeEvents = new Counter('realtime_events');
 
-    const body = JSON.stringify({
-        document: signedDoc,
-        signature: signature,
-        option: JSON.stringify(option),
-    });
+const jsonHeaders = { 'Content-Type': 'application/json' };
 
+const profileURI = (ccid) => `cckv://${ccid}/concrnt.world/profiles/main`;
+const timelineURI = (ccid, name) => `${profileURI(ccid)}/${name}-timeline`;
+const ownerOf = (uri) => uri.replace(/^cckv:\/\//, '').split(/[@/]/)[0];
+
+const commit = (identity, document) => {
     return http.post(
         `${apiBase}/commit`,
-        body,
-        {
-            headers: {
-                'Content-Type': 'application/json',
-            },
-        }
+        concrnt.signDocument(identity, JSON.stringify(document)),
+        { headers: jsonHeaders },
     );
 }
 
-const readTimeline = () => {
+const register = (identity) => {
+    const entity = {
+        kind: 'entity',
+        author: identity.address,
+        schema: 'https://schema.concrnt.net/entity.json',
+        value: { domain: targetFQDN },
+        createdAt: new Date(),
+    };
+    const signed = JSON.parse(concrnt.signDocument(identity, JSON.stringify(entity)));
+    signed.meta = {};
 
-    const timelineresp = http.get(
-        `${apiBase}/timelines/recent?timelines=${timelineID}`
-    );
-    check(timelineresp, {
-        'timeline queried': (r) => r.status === 200
+    const headers = Object.assign({}, jsonHeaders);
+    if (captchaToken) headers['captcha'] = captchaToken;
+
+    return http.post(`${apiBase}/register`, JSON.stringify(signed), { headers });
+}
+
+const createTimeline = (identity, name) => {
+    return commit(identity, {
+        kind: 'record',
+        key: timelineURI(identity.address, name),
+        author: identity.address,
+        schema: 'https://schema.concrnt.world/t/user.json',
+        value: {},
+        createdAt: new Date(),
     });
-
-    const items = JSON.parse(timelineresp.body).content;
-    for (const item of items) {
-
-        const msgresp = http.get(
-            `${apiBase}/message/${item.resourceID}`
-        );
-        check(msgresp, {
-            'message found': (r) => r.status === 200
-        });
-    }
-
-    return items;
-
 }
 
-const readTimelines = (timelines, token) => {
-
+const readTimelines = (uris) => {
     const timelineresp = http.get(
-        `${apiBase}/timelines/recent?timelines=${timelines.join(',')}`
+        `${apiBase}/timeline/recent?uris=${encodeURIComponent(uris.join(','))}&limit=16`
     );
-
     check(timelineresp, {
         'timelines queried': (r) => r.status === 200
     });
+    if (timelineresp.status !== 200) return [];
 
-    const items = JSON.parse(timelineresp.body).content;
+    const items = JSON.parse(timelineresp.body);
     for (const item of items) {
-
         const msgresp = http.get(
-            `${apiBase}/message/${item.resourceID}`,
-            {
-                headers: {
-                    Authorization: `Bearer ${token}`,
-                },
-            }
+            `${apiBase}/resolve?uri=${encodeURIComponent(item.href)}`
         );
         check(msgresp, {
-            'message found': (r) => r.status === 200
+            'post found': (r) => r.status === 200
         });
     }
 
     return items;
 }
 
-const attachAssociation = (identity, resourceID, ownerID) => {
-    const association = {
-        signer: identity.address,
-        type: 'association',
-        target: resourceID,
+const likePost = (identity, href) => {
+    return commit(identity, {
+        kind: 'association',
+        author: identity.address,
         schema: 'https://schema.concrnt.world/a/like.json',
-        body: {},
-        owner: ownerID,
-        timelines: [],
-        signedAt: new Date()
-    }
+        associate: href,
+        value: { profileURI: profileURI(identity.address) },
+        distributes: [
+            timelineURI(identity.address, 'activity'),
+            timelineURI(ownerOf(href), 'notify'),
+        ],
+        createdAt: new Date(),
+    });
+}
 
-    return postDocument(identity, association);
+const post = (identity, body, timelines) => {
+    return commit(identity, {
+        kind: 'record',
+        key: `${profileURI(identity.address)}/posts/${concrnt.newCDID(body)}`,
+        author: identity.address,
+        schema: 'https://schema.concrnt.world/m/markdown.json',
+        value: { body: body, emojis: {} },
+        distributes: timelines,
+        createdAt: new Date(),
+    });
 }
 
 export default function () {
-    const identity = concrnt.generateIdentity()
+    const identity = concrnt.generateIdentity();
 
-    const token = concrnt.generateAuthToken(identity, targetFQDN);
+    check(register(identity), {
+        'entity registered': (r) => r.status === 200
+    });
 
-    const affiliation = {
-        signer: identity.address,
-        type: 'affiliation',
-        domain: targetFQDN,
-        signedAt: new Date()
+    for (const name of ['home', 'notify', 'activity']) {
+        check(createTimeline(identity, name), {
+            [`${name} timeline created`]: (r) => r.status === 200
+        });
     }
-    const register = postDocument(identity, affiliation, {
-        info: '{}'
-    });
-    check(register, {
-        'affiliation created': (r) => r.status === 201
-    });
 
-    const profile = {
-        signer: identity.address,
-        type: 'profile',
+    const profile = commit(identity, {
+        kind: 'record',
+        key: profileURI(identity.address),
+        author: identity.address,
         schema: 'https://schema.concrnt.world/p/main.json',
-        body: {
-            username: `VU${__VU}`,
-        },
-        semanticID: 'world.concrnt.p',
-        signedAt: new Date()
-    }
-    const prof = postDocument(identity, profile);
-    check(prof, {
-        'profile created': (r) => r.status === 201
+        value: { username: `VU${__VU}` },
+        createdAt: new Date(),
+    });
+    check(profile, {
+        'profile created': (r) => r.status === 200
     });
 
-    const home = {
-        signer: identity.address,
-        type: 'timeline',
-        schema: 'https://schema.concrnt.world/t/empty.json',
-        body: {},
-        semanticID: 'world.concrnt.t-home',
-        policy: 'https://policy.concrnt.world/t/inline-read-write.json',
-        policyParams: `{"isWritePublic": false, "isReadPublic": true, "writer": ["${identity.address}"], "reader": []}`,
-        signedAt: new Date()
-    }
-    const homeres = postDocument(identity, home);
-    check(homeres, {
-        'home timeline created': (r) => r.status === 201
-    });
+    const timelines = [...targetTimelines, timelineURI(identity.address, 'home')];
 
-    const ws = new WebSocket(`${isSecure ? 'wss' : 'ws'}://${target}/api/v1/timelines/realtime`);
+    const ws = new WebSocket(wsURL);
     ws.binaryType = 'arraybuffer';
 
+    ws.onmessage = (e) => {
+        const ev = JSON.parse(e.data);
+        if (ev.type === 'subscribed') {
+            check(ev, {
+                'realtime subscribed': (ev) => ev.prefixes.length === timelines.length
+            });
+        } else {
+            realtimeEvents.add(1, { type: ev.type });
+        }
+    };
 
-    const tl = readTimeline();
-    const timelines = tl.map((item) => item.timelineID);
+    const round = () => {
+        const items = readTimelines(timelines);
+        if (items.length > 0) {
+            check(likePost(identity, items[0].href), {
+                'association created': (r) => r.status === 200
+            });
+        }
 
+        check(post(identity, getRandomPost(), timelines), {
+            'post created': (r) => r.status === 200
+        });
+    };
+
+    // rounds run from timers so the websocket keeps receiving between them
     ws.onopen = () => {
         ws.send(JSON.stringify({
             type: 'listen',
-            channels: timelines
+            prefixes: timelines,
         }));
 
-        for (let i = 0; i < 3; i++) {
-            const tl = readTimelines(timelines, token);
-            const at = attachAssociation(identity, tl[0].resourceID, tl[0].owner);
-            check(at, {
-                'association created': (r) => r.status === 201
-            });
-
-            const message = {
-                signer: identity.address,
-                type: 'message',
-                schema: 'https://schema.concrnt.world/m/markdown.json',
-                body: {
-                    body: getRandomPost(),
-                },
-                timelines: [timelineID, `world.concrnt.t-home@${identity.address}`],
-                signedAt: new Date()
+        let remaining = 3;
+        const next = () => {
+            round();
+            remaining--;
+            if (remaining > 0) {
+                setTimeout(next, (3 + Math.random() * 10) * 1000);
+            } else {
+                setTimeout(() => ws.close(), 1000);
             }
-
-            const post = postDocument(identity, message);
-            check(post, {
-                'post created': (r) => r.status === 201
-            });
-            sleep(3 + Math.random() * 10);
-        }
-
-        ws.close();
+        };
+        next();
     };
 }
