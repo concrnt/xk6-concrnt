@@ -14,6 +14,10 @@ import (
 )
 
 func recoverAddress(t *testing.T, msg string, sigHex string) string {
+	return recoverAddressHRP(t, msg, sigHex, "con")
+}
+
+func recoverAddressHRP(t *testing.T, msg string, sigHex string, hrp string) string {
 	t.Helper()
 	sig, err := hex.DecodeString(sigHex)
 	if err != nil {
@@ -29,7 +33,7 @@ func recoverAddress(t *testing.T, msg string, sigHex string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pubkeyToAddress(crypto.CompressPubkey(ecdsaPub))
+	return pubkeyToAddressHRP(crypto.CompressPubkey(ecdsaPub), hrp)
 }
 
 // vectors were produced by the previous cosmos-sdk based implementation
@@ -141,5 +145,113 @@ func TestGenerateAuthToken(t *testing.T) {
 	}
 	if got := recoverAddress(t, parts[0]+"."+parts[1], hex.EncodeToString(sig)); got != id.Address {
 		t.Fatalf("recovered %s, want %s", got, id.Address)
+	}
+}
+
+// pinned so a refactor of the derivation cannot silently change every seeded user
+func TestIdentityFromSeedVector(t *testing.T) {
+	c := &Concrnt{}
+	id := c.IdentityFromSeed("concrnt-loadtest/user/0")
+	if id.Address != "con1zt0hcy20snmlhze2gphuz9x4at84yfs3l5gwsr" ||
+		id.Privkey != "c3c753f4d9df4d1f3f1d1734f676ba42b61c936b2b5fce0ef130e792b224c326" {
+		t.Fatalf("identity vector changed: %+v", id)
+	}
+	sub := c.SubkeyFromSeed(id, "subkey")
+	if sub.CKID != "cck1p8lqsdpwwsnvtfga6legvpdl0wmlu3cwr5pt0v" || sub.Parent != id.Address {
+		t.Fatalf("subkey vector changed: %+v", sub)
+	}
+	if c.IdentityFromSeed("concrnt-loadtest/user/1").Address == id.Address {
+		t.Fatal("different seeds produced the same identity")
+	}
+}
+
+func TestGenerateSubkey(t *testing.T) {
+	c := &Concrnt{}
+	id := c.GenerateIdentity()
+	sub := c.GenerateSubkey(id)
+	if !strings.HasPrefix(sub.CKID, "cck1") || len(sub.CKID) != 42 || sub.Parent != id.Address {
+		t.Fatalf("unexpected subkey %+v", sub)
+	}
+	if c.KeyURI(sub) != "cckv://"+id.Address+"/keys/"+sub.CKID {
+		t.Fatalf("key uri %q", c.KeyURI(sub))
+	}
+}
+
+func TestSignDocumentWithSubkey(t *testing.T) {
+	c := &Concrnt{}
+	id := c.GenerateIdentity()
+	sub := c.GenerateSubkey(id)
+	doc := `{"kind":"record","author":"` + id.Address + `"}`
+
+	var sd SignedDocument
+	if err := json.Unmarshal([]byte(c.SignDocumentWithSubkey(sub, doc)), &sd); err != nil {
+		t.Fatal(err)
+	}
+	if sd.Proof.Type != ProofTypeSubkey || sd.Proof.Key == nil || *sd.Proof.Key != c.KeyURI(sub) {
+		t.Fatalf("proof %+v", sd.Proof)
+	}
+	if got := recoverAddressHRP(t, sd.Document, sd.Proof.Signature, "cck"); got != sub.CKID {
+		t.Fatalf("recovered %s, want %s", got, sub.CKID)
+	}
+
+	if strings.Contains(c.SignDocument(id, doc), `"key"`) {
+		t.Fatal("direct proof must not carry a key")
+	}
+}
+
+func TestGenerateAuthTokenWithSubkey(t *testing.T) {
+	c := &Concrnt{}
+	id := c.GenerateIdentity()
+	sub := c.GenerateSubkey(id)
+	parts := strings.Split(c.GenerateAuthTokenWithSubkey(sub, "example.com"), ".")
+	if len(parts) != 3 {
+		t.Fatalf("token has %d parts", len(parts))
+	}
+
+	var header Header
+	raw, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &header); err != nil {
+		t.Fatal(err)
+	}
+	if header.KeyID != c.KeyURI(sub) {
+		t.Fatalf("header %+v", header)
+	}
+
+	var claims Claims
+	raw, err = base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(raw, &claims); err != nil {
+		t.Fatal(err)
+	}
+	if claims.Issuer != id.Address || claims.Audience != "example.com" {
+		t.Fatalf("claims %+v", claims)
+	}
+
+	sig, err := base64.RawURLEncoding.DecodeString(parts[2])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := recoverAddressHRP(t, parts[0]+"."+parts[1], hex.EncodeToString(sig), "cck"); got != sub.CKID {
+		t.Fatalf("recovered %s, want %s", got, sub.CKID)
+	}
+
+	if strings.Contains(c.GenerateAuthToken(id, "example.com"), "kid") {
+		t.Fatal("master-key token header changed")
+	}
+}
+
+func TestNewCDIDX(t *testing.T) {
+	c := &Concrnt{}
+	a := c.NewCDIDX("cckv://con1example/concrnt.world/profiles/main/home-timeline")
+	if a != c.NewCDIDX("cckv://con1example/concrnt.world/profiles/main/home-timeline") {
+		t.Fatal("hash cdid is not deterministic")
+	}
+	if !cdid.IsHashCDID(a) {
+		t.Fatalf("%q is not a hash cdid", a)
 	}
 }
