@@ -65,7 +65,7 @@ make metrics BACKEND=postgres   # /metrics の jobqueue / go_sql / realtime / re
 | `FOLLOWS` | 20 | 1 ユーザーのフォロー数(先頭 5% を「人気ユーザー」として半分まで優先) |
 | `POSTS_PER_USER` | 10 | seed 時の初期投稿数 |
 | `LIKES_PER_USER` | 5 | seed 時のいいね数 |
-| `SEED_VUS` | 10 | seed の並列度 |
+| `SEED_VUS` | 100 | seed の並列度 |
 | `PHASE` | `register` | seed のフェーズ(`register` / `social`) |
 | `CAPTCHA` | 空 | `/register` に付ける `captcha` ヘッダ |
 | `SEED_FORCE` | `false` | seed のスキップ判定を無効化 |
@@ -77,6 +77,8 @@ make metrics BACKEND=postgres   # /metrics の jobqueue / go_sql / realtime / re
 | `BROWSE_RATE` | 1 | プロフィール・投稿詳細・通知の閲覧 /s(50/30/20%) |
 | `REGISTER_RATE` | 0 | 新規登録 /s(0 で無効) |
 | `COLD_RATIO` | 0.1 | 閲覧セッションのうち resolve キャッシュを捨てる割合(初回は常にコールド) |
+| `RAMP_UP` / `RAMP_DOWN` | `1m` / `30s` | lurkers のランプ時間。arrival 系シナリオは `RAMP_UP` 後に開始 |
+| `POSTER_MAX_VUS` / `ENGAGER_MAX_VUS` / `BROWSER_MAX_VUS` / `NEWCOMER_MAX_VUS` | 50 / 100 / 100 / 10 | 各 arrival シナリオの VU 上限(1/5 を事前確保)。レートを上げるときは `dropped_iterations` を見て上げる |
 
 プリセットの目安: small = 既定値(USERS=100)、medium = `USERS=1000 LURKERS=300 POST_RATE=3 ENGAGE_RATE=6 BROWSE_RATE=6`(seed は `SEED_VUS=30`)。
 

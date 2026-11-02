@@ -8,7 +8,7 @@ import concrnt from 'k6/x/concrnt';
 import { cfg } from './lib/env.js';
 import { userAt, followsOf, rng } from './lib/users.js';
 import { SCHEMA, uri, docs } from './lib/world.js';
-import { commit, resolve, query, acknowledges, items } from './lib/api.js';
+import { commitBatch, resolve, query, acknowledges, items, batch, queryURL, params } from './lib/api.js';
 import { registerUser } from './lib/register.js';
 
 export const options = {
@@ -18,6 +18,7 @@ export const options = {
             vus: cfg.seedVUs,
             iterations: cfg.users,
             maxDuration: '2h',
+            gracefulStop: '60s',
         },
     },
     thresholds: {
@@ -41,7 +42,7 @@ export default function () {
 
     if (cfg.phase === 'register') {
         if (!cfg.seedForce && resolve(uri.profile(u.ccid), null, { may404: true }).status === 200) return;
-        registerUser(u, u.listId);
+        registerUser(u, u.listId, { parallel: true });
         return;
     }
 
@@ -50,24 +51,29 @@ export default function () {
         if (acks.length >= Math.min(cfg.follows, cfg.users - 1)) return;
     }
 
+    // the 2 x FOLLOWS commits of a user are independent: one batch instead of 40 round trips
     const listURI = uri.list(u.ccid, u.listId);
     const follows = followsOf(i);
+    const social = [];
     for (const j of follows) {
         const target = userAt(j);
-        check(commit(u, docs.followAck(u.ccid, target.ccid)), { 'followed': (r) => r.status === 200 });
+        social.push(docs.followAck(u.ccid, target.ccid));
         const href = uri.timeline(target.ccid, 'home');
-        check(commit(u, docs.listItem(u.ccid, listURI, concrnt.newCDIDX(href), href, SCHEMA.userTimeline)), {
-            'list item added': (r) => r.status === 200,
-        });
+        social.push(docs.listItem(u.ccid, listURI, concrnt.newCDIDX(href), href, SCHEMA.userTimeline));
     }
+    check(commitBatch(u, social), { 'followed + list items added': (rs) => rs.every((r) => r.status === 200) });
     query({ prefix: `${listURI}/`, limit: 100 }, u);
 
     const r = rng(`${cfg.seed}/likes/${i}`);
-    for (let k = 0; k < cfg.likesPerUser; k++) {
-        const target = userAt(follows[Math.floor(r() * follows.length)]);
-        const posts = items(query({ prefix: `${uri.posts(target.ccid)}/`, limit: 10 }, u));
-        if (posts.length === 0) continue;
-        const post = JSON.parse(posts[Math.floor(r() * posts.length)].document);
-        check(commit(u, docs.like(u.ccid, post.key, post.author)), { 'liked': (r) => r.status === 200 });
-    }
+    const picks = [];
+    for (let k = 0; k < cfg.likesPerUser; k++) picks.push({ target: userAt(follows[Math.floor(r() * follows.length)]), roll: r() });
+    const postLists = batch(picks.map((p) => ['GET', queryURL({ prefix: `${uri.posts(p.target.ccid)}/`, limit: 10 }), null, params('query', u)]));
+    const likes = [];
+    postLists.forEach((res, k) => {
+        const posts = items(res);
+        if (posts.length === 0) return;
+        const post = JSON.parse(posts[Math.floor(picks[k].roll * posts.length)].document);
+        likes.push(docs.like(u.ccid, post.key, post.author));
+    });
+    check(commitBatch(u, likes), { 'liked': (rs) => rs.every((r) => r.status === 200) });
 }

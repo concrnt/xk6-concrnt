@@ -31,33 +31,35 @@ const scenarios = {
         exec: 'lurker',
         startVUs: 0,
         stages: [
-            { duration: '1m', target: cfg.lurkers },
+            { duration: cfg.rampUp, target: cfg.lurkers },
             { duration: cfg.duration, target: cfg.lurkers },
-            { duration: '30s', target: 0 },
+            { duration: cfg.rampDown, target: 0 },
         ],
         gracefulRampDown: `${cfg.sessionSeconds}s`,
         gracefulStop: `${cfg.sessionSeconds}s`,
     },
 };
 
-// constant-arrival-rate needs an integer rate, so sub-1/s rates are expressed per minute
-const arrival = (name, fn, perSecond, pre, max) => {
+// constant-arrival-rate needs an integer rate, so sub-1/s rates are expressed per minute.
+// maxVUs caps the concurrency of each persona (check dropped_iterations when raising rates);
+// a fifth of it is pre-allocated
+const arrival = (name, fn, perSecond, max) => {
     if (perSecond <= 0) return;
     scenarios[name] = {
         executor: 'constant-arrival-rate',
         exec: fn,
         rate: Math.max(1, Math.round(perSecond * 60)),
         timeUnit: '1m',
-        startTime: '1m',
+        startTime: cfg.rampUp,
         duration: cfg.duration,
-        preAllocatedVUs: pre,
+        preAllocatedVUs: Math.max(1, Math.ceil(max / 5)),
         maxVUs: max,
     };
 };
-arrival('posters', 'poster', cfg.postRate, 10, 50);
-arrival('engagers', 'engager', cfg.engageRate, 20, 100);
-arrival('browsers', 'browser', cfg.browseRate, 20, 100);
-arrival('newcomers', 'newcomer', cfg.registerRate, 2, 10);
+arrival('posters', 'poster', cfg.postRate, cfg.posterMaxVUs);
+arrival('engagers', 'engager', cfg.engageRate, cfg.engagerMaxVUs);
+arrival('browsers', 'browser', cfg.browseRate, cfg.browserMaxVUs);
+arrival('newcomers', 'newcomer', cfg.registerRate, cfg.newcomerMaxVUs);
 
 export const options = {
     scenarios,

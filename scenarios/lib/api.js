@@ -55,6 +55,20 @@ export function commit(user, doc, { master = false } = {}) {
     return res;
 }
 
+// independent commits of one user in parallel (seed only; world-app commits one at a time)
+export function commitBatch(user, docs, { master = false } = {}) {
+    if (docs.length === 0) return [];
+    const p = params('commit', user, { 'Content-Type': 'application/json' });
+    const res = http.batch(docs.map((doc) => {
+        const body = master
+            ? concrnt.signDocument(user.identity, JSON.stringify(doc))
+            : concrnt.signDocumentWithSubkey(user.subkey, JSON.stringify(doc));
+        return ['POST', `${API}/commit`, body, p];
+    }));
+    res.forEach((r, i) => metrics.commit.add(r.timings.duration, { kind: docs[i].kind }));
+    return res;
+}
+
 export const resolveURL = (u) => `${API}/resolve?${qs({ uri: u })}`;
 
 // may404: existence probes and optional documents (settings, themes) are not failures

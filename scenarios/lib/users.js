@@ -54,12 +54,13 @@ export function randomUser() {
     return userAt(Math.floor(Math.random() * cfg.users));
 }
 
-// the first 5% of users are "popular": everyone follows them, so their
-// notify timelines and association counts get the skewed load a real SNS has
+// users 0..FOLLOWS/2-1 are "popular": everyone follows them, so their notify
+// timelines and association counts get the skewed load a real SNS has. The set
+// does not depend on USERS, so growing the population in stages keeps the graph.
 export function followsOf(i) {
     const n = cfg.users;
     const want = Math.min(cfg.follows, n - 1);
-    const popular = Math.ceil(n * 0.05);
+    const popular = Math.floor(want / 2);
     const picked = [];
     for (let p = 0; p < popular && picked.length < Math.floor(want / 2); p++) {
         if (p !== i) picked.push(p);
