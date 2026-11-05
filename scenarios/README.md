@@ -77,6 +77,7 @@ make metrics BACKEND=postgres   # /metrics の jobqueue / go_sql / realtime / re
 | `BROWSE_RATE` | 1 | プロフィール・投稿詳細・通知の閲覧 /s(50/30/20%) |
 | `REGISTER_RATE` | 0 | 新規登録 /s(0 で無効) |
 | `COLD_RATIO` | 0.1 | 閲覧セッションのうち resolve キャッシュを捨てる割合(初回は常にコールド) |
+| `NO_CONNECTION_REUSE` | `false` | リクエストごとに接続を張り直す(k6 の `noConnectionReuse`)。VU は keep-alive 接続をセッション中ずっと持つので、ClusterIP Service 直叩きでは VU の乗る replica が固定され、負荷が replica 間で偏る(5000 DAU r5 では 1 replica に associations の 39 %)。偏りを確認・解消する実験用で、接続確立のコストが加わる |
 | `RAMP_UP` / `RAMP_DOWN` | `1m` / `30s` | lurkers のランプ時間。arrival 系シナリオは `RAMP_UP` 後に開始 |
 | `POSTER_MAX_VUS` / `ENGAGER_MAX_VUS` / `BROWSER_MAX_VUS` / `NEWCOMER_MAX_VUS` | 50 / 100 / 100 / 10 | 各 arrival シナリオの VU 上限(1/5 を事前確保)。レートを上げるときは `dropped_iterations` を見て上げる |
 

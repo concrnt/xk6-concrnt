@@ -35,4 +35,8 @@ export const cfg = {
     engagerMaxVUs: num('ENGAGER_MAX_VUS', 100),
     browserMaxVUs: num('BROWSER_MAX_VUS', 100),
     newcomerMaxVUs: num('NEWCOMER_MAX_VUS', 10),
+    // a VU keeps its keep-alive connections for its whole session, so with
+    // a ClusterIP Service the replica each VU lands on is fixed for minutes
+    // and the load spreads unevenly; this opens a new connection per request
+    noConnectionReuse: bool('NO_CONNECTION_REUSE', false),
 };

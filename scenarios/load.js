@@ -63,6 +63,7 @@ arrival('newcomers', 'newcomer', cfg.registerRate, cfg.newcomerMaxVUs);
 
 export const options = {
     scenarios,
+    noConnectionReuse: cfg.noConnectionReuse,
     thresholds: {
         checks: ['rate>0.99'],
         http_req_failed: ['rate<0.01'],
