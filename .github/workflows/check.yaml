@@ -24,3 +24,6 @@ jobs:
 
       - name: Test
         run: go test ./...
+
+      - name: Scenario decisions are reproducible
+        run: node --test scenarios/test/plan.test.mjs

@@ -8,7 +8,8 @@ import { register, commit, commitBatch, resolve, query } from './api.js';
 // shared by seed.js and the newcomers scenario of load.js.
 // parallel=true (seed) sends the independent commits of a step as one http.batch;
 // the newcomer of load.js keeps world-app's one-at-a-time order.
-export function registerUser(u, listId, { parallel = false } = {}) {
+// rand feeds the bodies of the initial posts.
+export function registerUser(u, listId, { parallel = false, rand = Math.random } = {}) {
     check(register(u.identity), { 'entity registered': (r) => r.status === 200 });
 
     // the entity becomes resolvable once the registration job ran; poll quickly (<= 30s)
@@ -45,7 +46,7 @@ export function registerUser(u, listId, { parallel = false } = {}) {
 
     const posts = [];
     for (let i = 0; i < cfg.postsPerUser; i++) {
-        const body = randomBody();
+        const body = randomBody(rand);
         const key = `${uri.posts(u.ccid)}/${concrnt.newCDID(body)}`;
         posts.push(docs.markdown(u.ccid, key, body, [uri.timeline(u.ccid, 'home')]));
     }

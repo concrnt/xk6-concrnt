@@ -9,6 +9,13 @@ export const metrics = {
     realtimeEvents: new Counter('realtime_events'),
     realtimeLatency: new Trend('realtime_event_latency', true),
     sessionCold: new Counter('session_cold'),
+    // what the run actually did, to check that two sides got the same workload
+    // (tags: author/target = popular|other, kind; see README "再現性")
+    posts: new Counter('workload_posts'),
+    associations: new Counter('workload_associations'),
+    // realtime events the workload must produce: per post / association, the
+    // online sessions subscribed to the author's home timeline (tags: type, author)
+    expectedEvents: new Counter('realtime_events_expected'),
 };
 
 export const API = `${cfg.baseURL}/api/v2`;

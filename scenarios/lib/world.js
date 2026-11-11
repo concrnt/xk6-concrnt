@@ -63,7 +63,8 @@ export const POST_SAMPLES = [
     'おすすめのレシピを教えてください！🍳',
 ];
 
-export const randomBody = () => POST_SAMPLES[Math.floor(Math.random() * POST_SAMPLES.length)];
+// rand: a () => [0,1) generator, seeded wherever the run has to be repeatable
+export const randomBody = (rand = Math.random) => POST_SAMPLES[Math.floor(rand() * POST_SAMPLES.length)];
 
 // document factories: same shapes world-app commits (see worldlib / web/src/components/Composer.tsx)
 export const docs = {

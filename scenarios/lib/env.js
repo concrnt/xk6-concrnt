@@ -4,6 +4,7 @@ const num = (k, d) => (e[k] ? Number(e[k]) : d);
 const bool = (k, d) => (e[k] ? ['1', 'true', 'yes'].includes(e[k].toLowerCase()) : d);
 
 const target = str('TARGET', 'localhost:8000');
+const seed = str('SEED', 'concrnt-loadtest');
 const secure = bool('SECURE', false);
 
 export const cfg = {
@@ -12,7 +13,10 @@ export const cfg = {
     fqdn: str('TARGET_FQDN', 'localhost'),
     baseURL: `${secure ? 'https' : 'http'}://${target}`,
     wsURL: `${secure ? 'wss' : 'ws'}://${target}/api/v2/realtime`,
-    seed: str('SEED', 'concrnt-loadtest'),
+    seed,
+    // the load decisions only: another value replays another workload on the
+    // population seeded with SEED
+    workloadSeed: str('WORKLOAD_SEED', seed),
     users: num('USERS', 100),
     follows: num('FOLLOWS', 20),
     postsPerUser: num('POSTS_PER_USER', 10),
@@ -39,4 +43,12 @@ export const cfg = {
     // a ClusterIP Service the replica each VU lands on is fixed for minutes
     // and the load spreads unevenly; this opens a new connection per request
     noConnectionReuse: bool('NO_CONNECTION_REUSE', false),
+    // every workload decision of load.js comes from SEED + scenario + iteration
+    // number (lib/plan.js); 0 draws them from Math.random() again
+    deterministic: bool('DETERMINISTIC', true),
+    // one "decision ..." line per iteration (and an "outcome ..." line where the
+    // result depends on the server) on the console, to diff two runs
+    decisionLog: bool('DECISION_LOG', false),
+    // names the newcomers of one run; unset, their identities come from the clock
+    runId: str('RUN_ID', ''),
 };

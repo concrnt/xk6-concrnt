@@ -42,7 +42,7 @@ export default function () {
 
     if (cfg.phase === 'register') {
         if (!cfg.seedForce && resolve(uri.profile(u.ccid), null, { may404: true }).status === 200) return;
-        registerUser(u, u.listId, { parallel: true });
+        registerUser(u, u.listId, { parallel: true, rand: rng(`${cfg.seed}/posts/${i}`) });
         return;
     }
 
