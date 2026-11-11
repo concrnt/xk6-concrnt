@@ -1,5 +1,5 @@
 import { SCHEMA, uri } from './world.js';
-import { metrics, resolveCached, desc, batch, associationsURL, associationCountsURL } from './api.js';
+import { metrics, resolveCached, desc, batch, items, associationsURL, associationCountsURL } from './api.js';
 
 // Message.load in worldlib: the record/author/profile come from the cache after
 // the first time, the three association calls are made on every render
@@ -13,7 +13,7 @@ export function loadMessage(href, me, depth = 1) {
     const doc = JSON.parse(sd.document);
     resolveCached(uri.entity(doc.author), me);
     resolveCached(uri.profile(doc.author), me);
-    batch([
+    const assoc = batch([
         desc('associations', associationsURL({ uri: href, author: me.ccid, limit: 100 }), me),
         desc('association-counts', associationCountsURL({ uri: href }), me),
         desc('association-counts', associationCountsURL({ uri: href, schema: SCHEMA.reaction }), me),
@@ -28,7 +28,8 @@ export function loadMessage(href, me, depth = 1) {
         if (target) loadMessage(target, me, depth - 1);
     }
     metrics.messageLoad.add(Date.now() - start, { result: 'ok' });
-    return { href, doc, sd };
+    // mine: the viewer's own associations on this message (what world-app uses to show "liked")
+    return { href, doc, sd, mine: () => items(assoc[0]).map((a) => JSON.parse(a.document)) };
 }
 
 export const reloadAssociations = (href, me) =>
